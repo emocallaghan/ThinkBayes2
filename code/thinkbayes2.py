@@ -36,9 +36,10 @@ import thinkplot
 import numpy as np
 import pandas
 
-import scipy.stats
-import scipy.special
-import scipy.ndimage
+import scipy
+from scipy import stats
+from scipy import special
+from scipy import ndimage
 
 ROOT2 = math.sqrt(2)
 
@@ -567,6 +568,17 @@ class Pmf(_DictWrapper):
             var += p * (x - mu) ** 2
         return var
 
+    def Std(self, mu=None):
+        """Computes the standard deviation of a PMF.
+
+        mu: the point around which the variance is computed;
+                if omitted, computes the mean
+
+        returns: float standard deviation
+        """
+        var = self.Var(mu)
+        return math.sqrt(var)
+
     def MaximumLikelihood(self):
         """Returns the value with the highest probability.
 
@@ -649,6 +661,70 @@ class Pmf(_DictWrapper):
         for v1, p1 in self.Items():
             for v2, p2 in other.Items():
                 pmf.Incr(v1 - v2, p1 * p2)
+        return pmf
+
+    def __mul__(self, other):
+        """Computes the Pmf of the product of values drawn from self and other.
+
+        other: another Pmf
+
+        returns: new Pmf
+        """
+        try:
+            return self.MulPmf(other)
+        except AttributeError:
+            return self.MulConstant(other)
+
+    def MulPmf(self, other):
+        """Computes the Pmf of the diff of values drawn from self and other.
+
+        other: another Pmf
+
+        returns: new Pmf
+        """
+        pmf = Pmf()
+        for v1, p1 in self.Items():
+            for v2, p2 in other.Items():
+                pmf.Incr(v1 * v2, p1 * p2)
+        return pmf
+
+    def MulConstant(self, other):
+        """Computes the Pmf of the product of a constant and values from self.
+
+        other: a number
+
+        returns: new Pmf
+        """
+        pmf = Pmf()
+        for v1, p1 in self.Items():
+            pmf.Set(v1 * other, p1)
+        return pmf
+
+    def __div__(self, other):
+        """Computes the Pmf of the ratio of values drawn from self and other.
+
+        other: another Pmf
+
+        returns: new Pmf
+        """
+        try:
+            return self.DivPmf(other)
+        except AttributeError:
+            return self.MulConstant(1/other)
+
+    __truediv__ = __div__
+
+    def DivPmf(self, other):
+        """Computes the Pmf of the ratio of values drawn from self and other.
+
+        other: another Pmf
+
+        returns: new Pmf
+        """
+        pmf = Pmf()
+        for v1, p1 in self.Items():
+            for v2, p2 in other.Items():
+                pmf.Incr(v1 / v2, p1 * p2)
         return pmf
 
     def Max(self, k):
@@ -806,7 +882,7 @@ def MakePmfFromItems(t, label=None):
     Returns:
         Pmf object
     """
-    return Pmf(t, label=label)
+    return Pmf(dict(t), label=label)
 
 
 def MakePmfFromHist(hist, label=None):
@@ -879,13 +955,14 @@ class Cdf(object):
                 self.label = label if label is not None else obj.label
 
         if obj is None:
+            # caller does not provide obj, make an empty Cdf
             self.xs = np.asarray([])
             self.ps = np.asarray([])
             if ps is not None:
                 logging.warning("Cdf: can't pass ps without also passing xs.")
             return
         else:
-            # if the caller provides xs and ps, we're done            
+            # if the caller provides xs and ps, just store them          
             if ps is not None:
                 if isinstance(ps, str):
                     logging.warning("Cdf: ps can't be a string")
@@ -894,7 +971,7 @@ class Cdf(object):
                 self.ps = np.asarray(ps)
                 return
 
-        # caller has provided a single value
+        # caller has provided just obj, not ps
         if isinstance(obj, Cdf):
             self.xs = copy.copy(obj.xs)
             self.ps = copy.copy(obj.ps)
@@ -1071,8 +1148,8 @@ class Cdf(object):
     def Sample(self, n):
         """Generates a random sample from this distribution.
         
-        Args:
-            n: int length of the sample
+        n: int length of the sample
+        returns: NumPy array
         """
         ps = np.random.random(n)
         return self.ValueArray(ps)
@@ -1164,7 +1241,7 @@ def MakeCdfFromItems(items, label=None):
     Returns:
         cdf: list of (value, fraction) pairs
     """
-    return Cdf(items, label=label)
+    return Cdf(dict(items), label=label)
 
 
 def MakeCdfFromDict(d, label=None):
@@ -1410,7 +1487,7 @@ class Pdf(object):
         """
         label = options.pop('label', '')
         xs, ds = self.Render(**options)
-        return Pmf(zip(xs, ds), label=label)
+        return Pmf(dict(zip(xs, ds)), label=label)
 
     def Render(self, **options):
         """Generates a sequence of points suitable for plotting.
@@ -1468,7 +1545,7 @@ class NormalPdf(Pdf):
 
         returns: float or NumPy array of probability density
         """
-        return scipy.stats.norm.pdf(xs, self.mu, self.sigma)
+        return stats.norm.pdf(xs, self.mu, self.sigma)
 
 
 class ExponentialPdf(Pdf):
@@ -1501,7 +1578,7 @@ class ExponentialPdf(Pdf):
 
         returns: float or NumPy array of probability density
         """
-        return scipy.stats.expon.pdf(xs, scale=1.0/self.lam)
+        return stats.expon.pdf(xs, scale=1.0/self.lam)
 
 
 class EstimatedPdf(Pdf):
@@ -1514,7 +1591,7 @@ class EstimatedPdf(Pdf):
         label: string
         """
         self.label = label if label is not None else '_nolegend_'
-        self.kde = scipy.stats.gaussian_kde(sample)
+        self.kde = stats.gaussian_kde(sample)
         low = min(sample)
         high = max(sample)
         self.linspace = np.linspace(low, high, 101)
@@ -1641,7 +1718,7 @@ def EvalNormalPdf(x, mu, sigma):
     
     returns: float probability density
     """
-    return scipy.stats.norm.pdf(x, mu, sigma)
+    return stats.norm.pdf(x, mu, sigma)
 
 
 def MakeNormalPmf(mu, sigma, num_sigmas, n=201):
@@ -1666,11 +1743,20 @@ def MakeNormalPmf(mu, sigma, num_sigmas, n=201):
 
 
 def EvalBinomialPmf(k, n, p):
-    """Evaluates the binomial pmf.
+    """Evaluates the binomial PMF.
 
     Returns the probabily of k successes in n trials with probability p.
     """
-    return scipy.stats.binom.pmf(k, n, p)
+    return stats.binom.pmf(k, n, p)
+    
+
+def EvalHypergeomPmf(k, N, K, n):
+    """Evaluates the hypergeometric PMF.
+
+    Returns the probabily of k successes in n trials from a population
+    N with K successes in it.
+    """
+    return stats.hypergeom.pmf(k, N, K, n)
     
 
 def EvalPoissonPmf(k, lam):
@@ -1683,8 +1769,8 @@ def EvalPoissonPmf(k, lam):
     """
     # don't use the scipy function (yet).  for lam=0 it returns NaN;
     # should be 0.0
-    # return scipy.stats.poisson.pmf(k, lam)
-    return lam ** k * math.exp(-lam) / math.factorial(k)
+    # return stats.poisson.pmf(k, lam)
+    return lam ** k * math.exp(-lam) / special.gamma(k+1)
 
 
 def MakePoissonPmf(lam, high, step=1):
@@ -1764,7 +1850,7 @@ def EvalNormalCdf(x, mu=0, sigma=1):
     Returns:
         float
     """
-    return scipy.stats.norm.cdf(x, loc=mu, scale=sigma)
+    return stats.norm.cdf(x, loc=mu, scale=sigma)
 
 
 def EvalNormalCdfInverse(p, mu=0, sigma=1):
@@ -1782,7 +1868,7 @@ def EvalNormalCdfInverse(p, mu=0, sigma=1):
     Returns:
         float
     """
-    return scipy.stats.norm.ppf(p, loc=mu, scale=sigma)
+    return stats.norm.ppf(p, loc=mu, scale=sigma)
 
 
 def EvalLognormalCdf(x, mu=0, sigma=1):
@@ -1794,7 +1880,7 @@ def EvalLognormalCdf(x, mu=0, sigma=1):
                 
     Returns: float or sequence
     """
-    return scipy.stats.lognorm.cdf(x, loc=mu, scale=sigma)
+    return stats.lognorm.cdf(x, loc=mu, scale=sigma)
 
 
 def RenderExpoCdf(lam, low, high, n=101):
@@ -1809,7 +1895,7 @@ def RenderExpoCdf(lam, low, high, n=101):
     """
     xs = np.linspace(low, high, n)
     ps = 1 - np.exp(-lam * xs)
-    #ps = scipy.stats.expon.cdf(xs, scale=1.0/lam)
+    #ps = stats.expon.cdf(xs, scale=1.0/lam)
     return xs, ps
 
 
@@ -1825,7 +1911,7 @@ def RenderNormalCdf(mu, sigma, low, high, n=101):
     returns: numpy arrays (xs, ps)
     """
     xs = np.linspace(low, high, n)
-    ps = scipy.stats.norm.cdf(xs, mu, sigma)
+    ps = stats.norm.cdf(xs, mu, sigma)
     return xs, ps
 
 
@@ -1844,7 +1930,7 @@ def RenderParetoCdf(xmin, alpha, low, high, n=50):
         low = xmin
     xs = np.linspace(low, high, n)
     ps = 1 - (xs / xmin) ** -alpha
-    #ps = scipy.stats.pareto.cdf(xs, scale=xmin, b=alpha)
+    #ps = stats.pareto.cdf(xs, scale=xmin, b=alpha)
     return xs, ps
 
 
@@ -1913,7 +1999,7 @@ class Beta(object):
     def MakeCdf(self, steps=101):
         """Returns the CDF of this distribution."""
         xs = [i / (steps - 1.0) for i in range(steps)]
-        ps = [scipy.special.betainc(self.alpha, self.beta, x) for x in xs]
+        ps = [special.betainc(self.alpha, self.beta, x) for x in xs]
         cdf = Cdf(xs, ps)
         return cdf
 
@@ -2625,7 +2711,7 @@ def Smooth(xs, sigma=2, **options):
     xs: sequence
     sigma: standard deviation of the filter
     """
-    return scipy.ndimage.filters.gaussian_filter1d(xs, sigma, **options)
+    return ndimage.filters.gaussian_filter1d(xs, sigma, **options)
 
 
 class HypothesisTest(object):
